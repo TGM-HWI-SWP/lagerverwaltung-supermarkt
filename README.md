@@ -96,33 +96,29 @@ Diese Architektur ermöglicht:
 
 ## Rollenvergabe (4er-Gruppe)
 
-### Rolle 1: Projektverantwortung & Schnittstellen (Contract Owner)
+### Rolle 1: Projektverantwortung & Schnittstellen (Contract Owner) -> Elias
 - Projektkoordination & Kommunikation
 - Zentrale Verantwortung für alle Schnittstellen
 - Dokumentation: `docs/contracts.md`
 - Release- & Versionsverantwortung
 - Unterstützung bei Mergekonflikten
--> Elias 
 
-### Rolle 2: Businesslogik & Report A
+### Rolle 2: Businesslogik & Report A -> Kerem
 - Implementierung der Kern-Use-Cases
 - Umsetzung von Report A (z.B. Lagerstandsreport)
 - Zugehörige Tests
 - Beispiel: Lagerbewirtschaftung, Bestandsverwaltung
--> Kerem
 
-### Rolle 3: Report B & Qualität
+### Rolle 3: Report B & Qualität -> Emmanuel
 - Umsetzung von Report B (z.B. Bewegungsprotokoll, Statistik)
 - Erweiterte Tests (Rand- & Fehlerfälle)
 - Dummy-Daten erstellen
 - Test-Coverage erhöhen
--> Emmanuel
 
-### Rolle 4: GUI & Interaktion
+### Rolle 4: GUI & Interaktion -> Philip
 - Konzeption & Umsetzung der GUI
 - Anbindung an die Businesslogik
 - GUI-Tests oder Testbeschreibung
--> Philip
 
 ## Entwicklungsablauf
 
