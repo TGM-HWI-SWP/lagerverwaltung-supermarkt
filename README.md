@@ -57,8 +57,8 @@ projekt/
 
 ```bash
 # 1. Repository klonen
-git clone <repository-url>
-cd projekt
+git clone https://github.com/TGM-HWI-SWP/lagerverwaltung-supermarkt.git#
+cd lagerverwaltung-supermarkt
 
 # 2. Virtuelle Umgebung erstellen (optional, aber empfohlen)
 python -m venv venv
@@ -102,23 +102,27 @@ Diese Architektur ermöglicht:
 - Dokumentation: `docs/contracts.md`
 - Release- & Versionsverantwortung
 - Unterstützung bei Mergekonflikten
+-> Elias 
 
 ### Rolle 2: Businesslogik & Report A
 - Implementierung der Kern-Use-Cases
 - Umsetzung von Report A (z.B. Lagerstandsreport)
 - Zugehörige Tests
 - Beispiel: Lagerbewirtschaftung, Bestandsverwaltung
+-> Kerem
 
 ### Rolle 3: Report B & Qualität
 - Umsetzung von Report B (z.B. Bewegungsprotokoll, Statistik)
 - Erweiterte Tests (Rand- & Fehlerfälle)
 - Dummy-Daten erstellen
 - Test-Coverage erhöhen
+-> Emmanuel
 
 ### Rolle 4: GUI & Interaktion
 - Konzeption & Umsetzung der GUI
 - Anbindung an die Businesslogik
 - GUI-Tests oder Testbeschreibung
+-> Philip
 
 ## Entwicklungsablauf
 
