@@ -103,13 +103,13 @@ Diese Architektur ermöglicht:
 - Release- & Versionsverantwortung
 - Unterstützung bei Mergekonflikten
 
-### Rolle 2: Businesslogik & Report A -> Kerem
+### Rolle 2: Businesslogik & Report A -> Emmanuel
 - Implementierung der Kern-Use-Cases
 - Umsetzung von Report A (z.B. Lagerstandsreport)
 - Zugehörige Tests
 - Beispiel: Lagerbewirtschaftung, Bestandsverwaltung
 
-### Rolle 3: Report B & Qualität -> Emmanuel
+### Rolle 3: Report B & Qualität -> Kerem
 - Umsetzung von Report B (z.B. Bewegungsprotokoll, Statistik)
 - Erweiterte Tests (Rand- & Fehlerfälle)
 - Dummy-Daten erstellen
