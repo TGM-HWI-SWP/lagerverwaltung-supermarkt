@@ -1,3 +1,9 @@
-"""Reports Module - Report-Generierung"""
+"""Reports Module - Report-Generierung."""
 
-__all__ = ["InventoryReport", "MovementReport"]
+from .report_a import InventoryReport, InventoryReportResult, InventoryReportRow
+
+__all__ = [
+    "InventoryReport",
+    "InventoryReportResult",
+    "InventoryReportRow",
+]
