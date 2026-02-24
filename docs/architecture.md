@@ -41,7 +41,7 @@ Das Projekt folgt der **Port-Adapter-Architektur** (Hexagonal Architecture) für
 
 #### `product.py`
 - **Klasse:** `Product`
-- **Attribute:** id, name, description, price, quantity, sku, category, created_at, updated_at, notes
+- **Attribute:** id, name, description, price, quantity, min_quantity, sku, category, created_at, updated_at, notes
 - **Methoden:**
   - `update_quantity(amount)` - Bestand aktualisieren mit Validierung
   - `get_total_value()` - Lagerwert berechnen
