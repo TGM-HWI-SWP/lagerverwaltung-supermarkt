@@ -136,7 +136,27 @@ class ReportPort(ABC):
   - `get_movements()` - Alle Bewegungen
   - `get_total_inventory_value()` - Gesamtwert
 
-### 5. UI Layer (`src/ui/`)
+
+### 5. Reports (`src/reports/`)
+
+**Verantwortung:** Deterministische, testbare Auswertungen basierend auf gespeicherten Daten.
+
+#### `InventoryReport` (Report A – Rolle 2)
+
+- Eigene Komponente (keine UI-Logik)
+- Nutzt `RepositoryPort.load_all_products()`
+- Berechnet:
+  - Gesamtwarenwert
+  - Anzahl Produkte
+  - LOW-Bestand
+  - OUT-of-Stock
+- Liefert ein `InventoryReportResult`-Objekt zurück
+- Vollständig unit-testbar
+
+Die GUI darf ausschließlich die berechneten Daten anzeigen,
+führt aber keine eigene Berechnung durch.
+
+### 6. UI Layer (`src/ui/`)
 
 **Verantwortung:** Benutzeroberfläche (PyQt6)
 
@@ -151,7 +171,7 @@ class ReportPort(ABC):
 - **Typ:** Modal Dialog
 - **Felder:** ID, Name, Beschreibung, Preis, Menge, Kategorie
 
-### 6. Tests (`tests/`)
+### 7. Tests (`tests/`)
 
 #### Unit Tests (`tests/unit/`)
 ```
@@ -170,11 +190,6 @@ test_domain.py
     - test_get_total_inventory_value
     - test_get_movements
 ```
-#### TestInventoryReport (Report A)
-Testet den deterministischen Lagerstandsreport (Rolle 2):
-
-- `test_report_a_empty_repo()` - Leeres Repository liefert 0-Werte und leere Liste
-- `test_report_a_totals_and_status_counts()` - Summen (Warenwert) und Status-Zählungen (OK/LOW/OUT)
 
 #### Integration Tests (`tests/integration/`)
 ```

@@ -64,6 +64,12 @@ pytest tests/ -v
 pytest tests/unit/ -v
 ```
 
+#### TestInventoryReport (Report A)
+Testet den deterministischen Lagerstandsreport:
+
+- `test_report_a_empty_repo()` - Leeres Repository liefert 0-Werte und leere Liste
+- `test_report_a_totals_and_status_counts()` - Summen (Warenwert) und Status-Zählungen (OK/LOW/OUT)
+
 ### Nur Integration Tests
 ```bash
 pytest tests/integration/ -v
