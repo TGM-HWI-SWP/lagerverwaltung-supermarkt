@@ -1443,11 +1443,12 @@ class NavButton(QPushButton):
 # SIDEBAR
 # ──────────────────────────────────────────────
 class Sidebar(GradientWidget):
-    def __init__(self, on_nav, parent=None):
+    def __init__(self, on_nav, music_player=None, parent=None):
         super().__init__(C_SIDEBAR, C_SIDEBAR_DARK, radius=0, parent=parent)
         self.setFixedWidth(210)
         self.on_nav = on_nav
         self.nav_buttons = []
+        self._music_player = music_player
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -1511,6 +1512,14 @@ class Sidebar(GradientWidget):
         sep2.setFrameShape(QFrame.HLine)
         sep2.setStyleSheet("color: rgba(255,255,255,30);")
         root.addWidget(sep2)
+
+        # Music player
+        if self._music_player:
+            root.addWidget(self._music_player)
+            sep3 = QFrame()
+            sep3.setFrameShape(QFrame.HLine)
+            sep3.setStyleSheet("color: rgba(255,255,255,30);")
+            root.addWidget(sep3)
 
         user_w = QWidget()
         user_w.setStyleSheet("background: transparent;")
@@ -1704,25 +1713,1031 @@ class BerichtePage(QWidget):
 
 
 # ──────────────────────────────────────────────
-# PLACEHOLDER PAGE
+# MUSIC PLAYER (pygame-based, graceful fallback)
 # ──────────────────────────────────────────────
-class PlaceholderPage(QWidget):
-    def __init__(self, title, icon="📄", parent=None):
+MUSIC_AVAILABLE = False
+try:
+    import pygame
+    pygame.mixer.init()
+    MUSIC_AVAILABLE = True
+except Exception:
+    pass
+
+import math, struct, wave, tempfile
+
+def _generate_lofi_wav(path, duration=30, sr=44100):
+    """Generate a pleasant lo-fi style ambient WAV programmatically."""
+    import random
+    random.seed(42)
+    n = sr * duration
+    samples = []
+
+    # chord progression frequencies (Cmaj7 -> Am7 -> Fmaj7 -> G7)
+    chords = [
+        [261.63, 329.63, 392.00, 493.88],  # Cmaj7
+        [220.00, 261.63, 329.63, 415.30],  # Am7
+        [174.61, 220.00, 261.63, 349.23],  # Fmaj7
+        [196.00, 246.94, 293.66, 392.00],  # G7
+    ]
+    chord_len = sr * (duration // len(chords))
+
+    for i in range(n):
+        t = i / sr
+        chord_idx = min(i // chord_len, len(chords) - 1)
+        freqs = chords[chord_idx]
+
+        # Soft pad sound (sine waves with detuning)
+        val = 0.0
+        for f in freqs:
+            detune = 1.0 + random.uniform(-0.002, 0.002)
+            val += math.sin(2 * math.pi * f * detune * t) * 0.12
+
+        # Subtle bass note (octave down)
+        bass_f = freqs[0] / 2
+        val += math.sin(2 * math.pi * bass_f * t) * 0.10
+
+        # Very gentle vinyl crackle noise
+        val += random.uniform(-0.015, 0.015)
+
+        # Soft fade envelope per chord
+        pos_in_chord = (i % chord_len) / chord_len
+        env = math.sin(math.pi * pos_in_chord) ** 0.5
+        val *= env * 0.6
+
+        # Clip
+        val = max(-1.0, min(1.0, val))
+        samples.append(int(val * 32767))
+
+    with wave.open(path, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        data = struct.pack(f"<{len(samples)}h", *samples)
+        wf.writeframes(data)
+
+
+class MusicPlayer(QWidget):
+    """Floating music player bar shown at the bottom of the sidebar."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(64)
+        self.setStyleSheet("background: transparent;")
+        self._playing = False
+        self._volume = 0.5
+        self._music_path = None
+        self._timer = None
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 4, 10, 4)
+        lay.setSpacing(2)
+
+        # Title row
+        title_row = QHBoxLayout()
+        self.track_label = QLabel("🎵 Lo-Fi Ambient")
+        self.track_label.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.track_label.setStyleSheet("color: rgba(255,255,255,180); background: transparent;")
+        title_row.addWidget(self.track_label)
+        title_row.addStretch()
+        lay.addLayout(title_row)
+
+        # Controls row
+        ctrl_row = QHBoxLayout()
+        ctrl_row.setSpacing(6)
+
+        self.play_btn = QPushButton("▶")
+        self.play_btn.setFixedSize(30, 30)
+        self.play_btn.setFont(QFont("Segoe UI", 12))
+        self.play_btn.setCursor(Qt.PointingHandCursor)
+        self.play_btn.setStyleSheet("""
+            QPushButton {
+                background: #1a6bff; color: white;
+                border-radius: 15px; border: none;
+            }
+            QPushButton:hover { background: #0d4fcf; }
+        """)
+        self.play_btn.clicked.connect(self._toggle_play)
+
+        # Volume slider (simple buttons)
+        vol_down = QPushButton("🔉")
+        vol_down.setFixedSize(26, 26)
+        vol_down.setStyleSheet("QPushButton { background:transparent; border:none; color:rgba(255,255,255,160); font-size:13px; } QPushButton:hover{color:white;}")
+        vol_down.setCursor(Qt.PointingHandCursor)
+        vol_down.clicked.connect(lambda: self._set_volume(max(0.0, self._volume - 0.15)))
+
+        vol_up = QPushButton("🔊")
+        vol_up.setFixedSize(26, 26)
+        vol_up.setStyleSheet("QPushButton { background:transparent; border:none; color:rgba(255,255,255,160); font-size:13px; } QPushButton:hover{color:white;}")
+        vol_up.setCursor(Qt.PointingHandCursor)
+        vol_up.clicked.connect(lambda: self._set_volume(min(1.0, self._volume + 0.15)))
+
+        self.vol_label = QLabel(f"{int(self._volume*100)}%")
+        self.vol_label.setFont(QFont("Segoe UI", 9))
+        self.vol_label.setStyleSheet("color: rgba(255,255,255,120); background: transparent;")
+        self.vol_label.setFixedWidth(34)
+
+        ctrl_row.addWidget(self.play_btn)
+        ctrl_row.addWidget(vol_down)
+        ctrl_row.addWidget(self.vol_label)
+        ctrl_row.addWidget(vol_up)
+        ctrl_row.addStretch()
+
+        # Status dot
+        self.status_dot = QLabel("●")
+        self.status_dot.setFont(QFont("Segoe UI", 10))
+        self.status_dot.setStyleSheet("color: #555; background: transparent;")
+        ctrl_row.addWidget(self.status_dot)
+        lay.addLayout(ctrl_row)
+
+        # Prepare music
+        if MUSIC_AVAILABLE:
+            self._prepare_music()
+
+    def _prepare_music(self):
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.close()
+            self._music_path = tmp.name
+            # Generate in background-ish (fast enough for 30s)
+            _generate_lofi_wav(self._music_path, duration=30)
+        except Exception as e:
+            print(f"Music gen error: {e}")
+
+    def _toggle_play(self):
+        if not MUSIC_AVAILABLE:
+            QMessageBox.information(self, "Musik", "Installiere pygame für Musik:\n\npip install pygame")
+            return
+        if self._playing:
+            self._stop()
+        else:
+            self._play()
+
+    def _play(self):
+        if not self._music_path or not os.path.exists(self._music_path):
+            return
+        try:
+            pygame.mixer.music.load(self._music_path)
+            pygame.mixer.music.set_volume(self._volume)
+            pygame.mixer.music.play(-1)  # loop forever
+            self._playing = True
+            self.play_btn.setText("⏸")
+            self.status_dot.setStyleSheet("color: #28c76f; background: transparent;")
+            self.track_label.setText("🎵 Lo-Fi Ambient  ♪")
+        except Exception as e:
+            print(f"Music play error: {e}")
+
+    def _stop(self):
+        try:
+            pygame.mixer.music.stop()
+        except:
+            pass
+        self._playing = False
+        self.play_btn.setText("▶")
+        self.status_dot.setStyleSheet("color: #555; background: transparent;")
+        self.track_label.setText("🎵 Lo-Fi Ambient")
+
+    def _set_volume(self, v):
+        self._volume = v
+        self.vol_label.setText(f"{int(v*100)}%")
+        if MUSIC_AVAILABLE and self._playing:
+            try:
+                pygame.mixer.music.set_volume(v)
+            except:
+                pass
+
+    def closeEvent(self, event):
+        self._stop()
+        if self._music_path and os.path.exists(self._music_path):
+            try:
+                os.unlink(self._music_path)
+            except:
+                pass
+        super().closeEvent(event)
+
+
+# ──────────────────────────────────────────────
+# ARTIKELVERWALTUNG PAGE
+# ──────────────────────────────────────────────
+class ArtikelverwaltungPage(QWidget):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(f"background: {C_PAGE};")
+        self._build()
+
+    def _build(self):
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        inner = QWidget()
+        inner.setStyleSheet(f"background: {C_PAGE};")
+        root = QVBoxLayout(inner)
+        root.setContentsMargins(28, 24, 28, 28)
+        root.setSpacing(20)
+
+        hdr = QHBoxLayout()
+        hdr.addWidget(label("🏷 Artikelverwaltung", 22, bold=True))
+        hdr.addStretch()
+        b_new = btn("+ Neuer Artikel", bg=C_GREEN)
+        b_new.clicked.connect(self._neuer_artikel)
+        b_csv = btn("📊 CSV Export", bg=C_MUTED)
+        b_csv.clicked.connect(lambda: export_csv(APP_DATA["artikel"],
+            ["id","name","kategorie","bestand","min_bestand","preis","lieferant","mhd"],
+            "Artikel", self))
+        hdr.addWidget(b_new)
+        hdr.addWidget(b_csv)
+        root.addLayout(hdr)
+
+        # Stats row
+        stats_row = QHBoxLayout()
+        kategorien = {}
+        for a in APP_DATA["artikel"]:
+            k = a["kategorie"]
+            kategorien[k] = kategorien.get(k, 0) + 1
+
+        for kat, cnt in list(kategorien.items())[:4]:
+            sc = card()
+            shadow(sc, blur=8)
+            scl = QVBoxLayout(sc)
+            scl.setContentsMargins(14, 10, 14, 10)
+            scl.addWidget(label(str(cnt), 24, bold=True, color=C_BLUE))
+            scl.addWidget(label(kat, 10, color=C_MUTED))
+            stats_row.addWidget(sc)
+        root.addLayout(stats_row)
+
+        # Search + filter
+        f_row = QHBoxLayout()
+        self.search_e = styled_input("🔍 Artikel suchen...")
+        self.search_e.textChanged.connect(self._filter)
+        self.kat_filter = styled_combo(["Alle Kategorien"] + list(set(a["kategorie"] for a in APP_DATA["artikel"])))
+        self.kat_filter.currentTextChanged.connect(self._filter)
+        f_row.addWidget(self.search_e, 2)
+        f_row.addWidget(self.kat_filter, 1)
+        root.addLayout(f_row)
+
+        # Cards grid
+        self.cards_widget = QWidget()
+        self.cards_widget.setStyleSheet("background: transparent;")
+        self.cards_layout = QVBoxLayout(self.cards_widget)
+        self.cards_layout.setSpacing(12)
+        self._render_artikel_cards(APP_DATA["artikel"])
+        root.addWidget(self.cards_widget)
+        root.addStretch()
+
+        scroll.setWidget(inner)
         lay = QVBoxLayout(self)
-        lay.setAlignment(Qt.AlignCenter)
-        ico = QLabel(icon)
-        ico.setFont(QFont("Segoe UI", 64))
-        ico.setAlignment(Qt.AlignCenter)
-        ico.setStyleSheet("background: transparent;")
-        t = label(title, 24, bold=True)
-        t.setAlignment(Qt.AlignCenter)
-        s = label("Diese Seite ist im Aufbau.", 14, color=C_MUTED)
-        s.setAlignment(Qt.AlignCenter)
-        lay.addWidget(ico)
-        lay.addWidget(t)
-        lay.addWidget(s)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(scroll)
+
+    def _render_artikel_cards(self, artikel_list):
+        # Clear
+        while self.cards_layout.count():
+            item = self.cards_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        ROW_SIZE = 2
+        for i in range(0, len(artikel_list), ROW_SIZE):
+            row_w = QWidget()
+            row_w.setStyleSheet("background: transparent;")
+            row_lay = QHBoxLayout(row_w)
+            row_lay.setSpacing(16)
+            row_lay.setContentsMargins(0,0,0,0)
+
+            for art in artikel_list[i:i+ROW_SIZE]:
+                c = card()
+                shadow(c, blur=10)
+                cl = QVBoxLayout(c)
+                cl.setContentsMargins(20, 16, 20, 16)
+                cl.setSpacing(8)
+
+                top = QHBoxLayout()
+                art_icon = {"Molkereiprodukte":"🥛","Getränke":"🍹","Obst & Gemüse":"🥦",
+                            "Tiefkühlprodukte":"❄","Backwaren":"🍞"}.get(art["kategorie"],"📦")
+                ico_lbl = QLabel(art_icon)
+                ico_lbl.setFont(QFont("Segoe UI", 26))
+                ico_lbl.setStyleSheet("background: #f0f4ff; border-radius:10px; padding:4px;")
+                ico_lbl.setFixedSize(48, 48)
+                ico_lbl.setAlignment(Qt.AlignCenter)
+
+                name_col = QVBoxLayout()
+                name_col.addWidget(label(art["name"], 13, bold=True))
+                name_col.addWidget(label(f"{art['id']} · {art['kategorie']}", 10, color=C_MUTED))
+
+                # Status badge
+                ratio = art["bestand"] / max(art["min_bestand"], 1)
+                if ratio < 0.5:
+                    st_bg, st_fg, st_txt = "#ffeaea","#c0392b","⚠ Kritisch"
+                elif ratio < 1.0:
+                    st_bg, st_fg, st_txt = "#fff4e0","#b86200","⚠ Niedrig"
+                else:
+                    st_bg, st_fg, st_txt = "#e8faf2","#1a8a52","✅ OK"
+                st_badge = badge(st_txt, st_bg, st_fg)
+
+                top.addWidget(ico_lbl)
+                top.addSpacing(10)
+                top.addLayout(name_col)
+                top.addStretch()
+                top.addWidget(st_badge)
+                cl.addLayout(top)
+
+                # Details grid
+                det_row = QHBoxLayout()
+                for det_label_txt, det_val in [
+                    ("Bestand", f"{art['bestand']} Stk."),
+                    ("Mindest", f"{art['min_bestand']} Stk."),
+                    ("Preis", f"€ {art['preis']:.2f}"),
+                    ("MHD", art["mhd"]),
+                ]:
+                    det_col = QVBoxLayout()
+                    det_col.setSpacing(2)
+                    det_col.addWidget(label(det_label_txt, 9, color=C_MUTED))
+                    det_col.addWidget(label(det_val, 12, bold=True))
+                    det_row.addLayout(det_col)
+                    det_row.addStretch()
+                cl.addLayout(det_row)
+
+                # Lieferant
+                cl.addWidget(label(f"🏭 {art['lieferant']}", 11, color=C_MUTED))
+
+                # Buttons
+                btn_row2 = QHBoxLayout()
+                b_det = btn("Detail", bg=C_BLUE, size=11)
+                b_det.setFixedHeight(30)
+                b_det.clicked.connect(lambda _, a=art: ArtikelDetailDialog(a, self).exec_())
+                b_ord = btn("Bestellen", bg=C_GREEN, size=11)
+                b_ord.setFixedHeight(30)
+                b_ord.clicked.connect(lambda _, a=art: NeueBestellungDialog(pre_artikel=a, parent=self).exec_())
+                b_edit = btn("Bearbeiten", bg=C_ORANGE, size=11)
+                b_edit.setFixedHeight(30)
+                b_edit.clicked.connect(lambda _, a=art: self._edit_artikel(a))
+                btn_row2.addWidget(b_det)
+                btn_row2.addWidget(b_ord)
+                btn_row2.addWidget(b_edit)
+                btn_row2.addStretch()
+                cl.addLayout(btn_row2)
+
+                row_lay.addWidget(c)
+
+            if len(artikel_list[i:i+ROW_SIZE]) < ROW_SIZE:
+                row_lay.addStretch()
+
+            self.cards_layout.addWidget(row_w)
+
+    def _filter(self):
+        txt = self.search_e.text().lower()
+        kat = self.kat_filter.currentText()
+        filtered = [a for a in APP_DATA["artikel"]
+                    if (txt in a["name"].lower() or txt in a["id"].lower())
+                    and (kat == "Alle Kategorien" or a["kategorie"] == kat)]
+        self._render_artikel_cards(filtered)
+
+    def _neuer_artikel(self):
+        dlg = NeuerArtikelDialog(self)
+        if dlg.exec_():
+            self._render_artikel_cards(APP_DATA["artikel"])
+
+    def _edit_artikel(self, art):
+        dlg = ArtikelBearbeitenDialog(art, self)
+        if dlg.exec_():
+            self._render_artikel_cards(APP_DATA["artikel"])
+
+
+class ArtikelBearbeitenDialog(QDialog):
+    def __init__(self, art, parent=None):
+        super().__init__(parent)
+        self.art = art
+        self.art_index = next((i for i, a in enumerate(APP_DATA["artikel"]) if a["id"] == art["id"]), None)
+        self.setWindowTitle(f"Artikel bearbeiten – {art['name']}")
+        self.setMinimumWidth(480)
+        self.setStyleSheet(f"background: {C_PAGE};")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 24, 24, 24)
+        lay.setSpacing(16)
+        lay.addWidget(label(f"✏ {art['name']}", 18, bold=True))
+
+        c = card()
+        fl = QFormLayout(c)
+        fl.setContentsMargins(20, 16, 20, 16)
+        fl.setSpacing(12)
+
+        self.f_name = styled_input(); self.f_name.setText(art["name"])
+        self.f_kat = styled_combo(["Molkereiprodukte","Getränke","Obst & Gemüse","Tiefkühlprodukte","Backwaren","Sonstiges"])
+        idx = self.f_kat.findText(art["kategorie"])
+        if idx >= 0: self.f_kat.setCurrentIndex(idx)
+
+        self.f_bestand = QSpinBox(); self.f_bestand.setRange(0,99999); self.f_bestand.setValue(art["bestand"])
+        self.f_bestand.setFont(QFont("Segoe UI",12)); self.f_bestand.setFixedHeight(38)
+        self.f_bestand.setStyleSheet("QSpinBox{background:#f4f7fb;border:1.5px solid #d8e3f0;border-radius:8px;padding:0 10px;}")
+
+        self.f_min = QSpinBox(); self.f_min.setRange(0,99999); self.f_min.setValue(art["min_bestand"])
+        self.f_min.setFont(QFont("Segoe UI",12)); self.f_min.setFixedHeight(38)
+        self.f_min.setStyleSheet("QSpinBox{background:#f4f7fb;border:1.5px solid #d8e3f0;border-radius:8px;padding:0 10px;}")
+
+        self.f_preis = QDoubleSpinBox(); self.f_preis.setRange(0.01,99999); self.f_preis.setValue(art["preis"])
+        self.f_preis.setPrefix("€ "); self.f_preis.setDecimals(2)
+        self.f_preis.setFont(QFont("Segoe UI",12)); self.f_preis.setFixedHeight(38)
+        self.f_preis.setStyleSheet("QDoubleSpinBox{background:#f4f7fb;border:1.5px solid #d8e3f0;border-radius:8px;padding:0 10px;}")
+
+        lieferanten = [l["name"] for l in APP_DATA.get("lieferanten",[])]
+        self.f_lief = styled_combo(lieferanten)
+        li = self.f_lief.findText(art["lieferant"])
+        if li >= 0: self.f_lief.setCurrentIndex(li)
+
+        self.f_mhd = QDateEdit()
+        try:
+            d = QDate.fromString(art["mhd"], "yyyy-MM-dd")
+            self.f_mhd.setDate(d)
+        except:
+            self.f_mhd.setDate(QDate.currentDate())
+        self.f_mhd.setCalendarPopup(True)
+        self.f_mhd.setFont(QFont("Segoe UI",12)); self.f_mhd.setFixedHeight(38)
+        self.f_mhd.setStyleSheet("QDateEdit{background:#f4f7fb;border:1.5px solid #d8e3f0;border-radius:8px;padding:0 10px;}")
+
+        fl.addRow(label("Name:",12,bold=True,color=C_MUTED), self.f_name)
+        fl.addRow(label("Kategorie:",12,bold=True,color=C_MUTED), self.f_kat)
+        fl.addRow(label("Bestand:",12,bold=True,color=C_MUTED), self.f_bestand)
+        fl.addRow(label("Mindestbestand:",12,bold=True,color=C_MUTED), self.f_min)
+        fl.addRow(label("Preis:",12,bold=True,color=C_MUTED), self.f_preis)
+        fl.addRow(label("Lieferant:",12,bold=True,color=C_MUTED), self.f_lief)
+        fl.addRow(label("MHD:",12,bold=True,color=C_MUTED), self.f_mhd)
+        lay.addWidget(c)
+
+        btn_row = QHBoxLayout()
+        b_save = btn("💾 Speichern", C_GREEN)
+        b_save.clicked.connect(self._save)
+        b_del = btn("🗑 Löschen", C_RED)
+        b_del.clicked.connect(self._delete)
+        b_cancel = btn("Abbrechen", bg="#e0e7f0", fg=C_TEXT)
+        b_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(b_save)
+        btn_row.addWidget(b_del)
+        btn_row.addStretch()
+        btn_row.addWidget(b_cancel)
+        lay.addLayout(btn_row)
+
+    def _save(self):
+        if self.art_index is not None:
+            APP_DATA["artikel"][self.art_index].update({
+                "name": self.f_name.text().strip(),
+                "kategorie": self.f_kat.currentText(),
+                "bestand": self.f_bestand.value(),
+                "min_bestand": self.f_min.value(),
+                "preis": self.f_preis.value(),
+                "lieferant": self.f_lief.currentText(),
+                "mhd": self.f_mhd.date().toString("yyyy-MM-dd"),
+            })
+            save_data(APP_DATA)
+            QMessageBox.information(self, "Gespeichert", "Artikel wurde aktualisiert!")
+            self.accept()
+
+    def _delete(self):
+        reply = QMessageBox.question(self, "Löschen",
+            f"Artikel '{self.art['name']}' wirklich löschen?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes and self.art_index is not None:
+            APP_DATA["artikel"].pop(self.art_index)
+            save_data(APP_DATA)
+            self.accept()
+
+
+# ──────────────────────────────────────────────
+# BESTÄTIGUNG PAGE
+# ──────────────────────────────────────────────
+class BestaetigungPage(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"background: {C_PAGE};")
+        self._build()
+
+    def _build(self):
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        inner = QWidget()
+        inner.setStyleSheet(f"background: {C_PAGE};")
+        root = QVBoxLayout(inner)
+        root.setContentsMargins(28, 24, 28, 28)
+        root.setSpacing(20)
+
+        root.addWidget(label("✅ Wareneingang bestätigen", 22, bold=True))
+        root.addWidget(label("Hier können eingehende Lieferungen geprüft und bestätigt werden.", 13, color=C_MUTED))
+
+        # Pending orders (not yet "Geliefert")
+        pending = [b for b in APP_DATA["bestellungen"] if b.get("status") != "Geliefert" and b.get("status") != "Storniert"]
+
+        if not pending:
+            c = card()
+            cl = QVBoxLayout(c)
+            cl.setContentsMargins(30, 40, 30, 40)
+            cl.setAlignment(Qt.AlignCenter)
+            cl.addWidget(label("✅", 48))
+            lbl_ok = label("Alle Bestellungen bestätigt!", 16, bold=True)
+            lbl_ok.setAlignment(Qt.AlignCenter)
+            cl.addWidget(lbl_ok)
+            root.addWidget(c)
+        else:
+            for best in pending:
+                c = card()
+                cl = QHBoxLayout(c)
+                cl.setContentsMargins(20, 16, 20, 16)
+                cl.setSpacing(16)
+
+                # Left info
+                info = QVBoxLayout()
+                info.setSpacing(4)
+
+                top_row = QHBoxLayout()
+                top_row.addWidget(label(best["id"], 14, bold=True))
+                top_row.addSpacing(8)
+                status = best.get("status","–")
+                status_colors = {"Unterwegs":("#fff4e0","#b86200"),"Anrufen":("#ffeaea","#c0392b"),"Ausstehend":("#e8f0ff","#1a5dcf")}
+                bg, fg = status_colors.get(status, ("#eee","#333"))
+                top_row.addWidget(badge(status, bg, fg))
+                top_row.addStretch()
+                info.addLayout(top_row)
+
+                info.addWidget(label(f"📦 {best['artikel']}  ·  Menge: {best['menge']}", 12))
+                info.addWidget(label(f"🏭 {best['lieferant']}  ·  Datum: {best['datum']}  ·  € {best.get('gesamt',0):.2f}", 11, color=C_MUTED))
+
+                cl.addLayout(info)
+                cl.addStretch()
+
+                # Action buttons
+                btn_col = QVBoxLayout()
+                b_confirm = btn("✅ Bestätigen", bg=C_GREEN, size=11)
+                b_confirm.setFixedWidth(140)
+                b_confirm.clicked.connect(lambda _, b=best: self._confirm(b))
+                b_cancel = btn("❌ Stornieren", bg=C_RED, size=11)
+                b_cancel.setFixedWidth(140)
+                b_cancel.clicked.connect(lambda _, b=best: self._stornieren(b))
+                b_detail = btn("Detail", bg=C_MUTED, size=11)
+                b_detail.setFixedWidth(140)
+                b_detail.clicked.connect(lambda _, b=best: BestellungDetailDialog(b, self).exec_())
+                btn_col.addWidget(b_confirm)
+                btn_col.addWidget(b_cancel)
+                btn_col.addWidget(b_detail)
+                cl.addLayout(btn_col)
+                root.addWidget(c)
+
+        root.addStretch()
+        scroll.setWidget(inner)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0,0,0,0)
+        lay.addWidget(scroll)
+
+    def _confirm(self, best):
+        idx = next((i for i, b in enumerate(APP_DATA["bestellungen"]) if b["id"] == best["id"]), None)
+        if idx is not None:
+            APP_DATA["bestellungen"][idx]["status"] = "Geliefert"
+            save_data(APP_DATA)
+            QMessageBox.information(self, "Bestätigt", f"Bestellung {best['id']} als geliefert markiert!")
+            self._rebuild()
+
+    def _stornieren(self, best):
+        reply = QMessageBox.question(self, "Stornieren",
+            f"Bestellung {best['id']} wirklich stornieren?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            idx = next((i for i, b in enumerate(APP_DATA["bestellungen"]) if b["id"] == best["id"]), None)
+            if idx is not None:
+                APP_DATA["bestellungen"][idx]["status"] = "Storniert"
+                save_data(APP_DATA)
+                self._rebuild()
+
+    def _rebuild(self):
+        # Remove old layout and rebuild
+        old = self.layout()
+        if old:
+            while old.count():
+                item = old.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            QWidget().setLayout(old)
+        self._build()
+
+
+# ──────────────────────────────────────────────
+# ARTIKELLISTE PAGE
+# ──────────────────────────────────────────────
+class ArtikellistePage(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"background: {C_PAGE};")
+        self._build()
+
+    def _build(self):
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        inner = QWidget()
+        inner.setStyleSheet(f"background: {C_PAGE};")
+        root = QVBoxLayout(inner)
+        root.setContentsMargins(28, 24, 28, 28)
+        root.setSpacing(20)
+
+        hdr = QHBoxLayout()
+        hdr.addWidget(label("📋 Artikelliste", 22, bold=True))
+        hdr.addStretch()
+        b_csv = btn("📊 CSV Export", bg=C_MUTED)
+        b_csv.clicked.connect(lambda: export_csv(APP_DATA["artikel"],
+            ["id","name","kategorie","bestand","min_bestand","preis","lieferant","mhd"],
+            "Artikelliste", self))
+        hdr.addWidget(b_csv)
+        root.addLayout(hdr)
+
+        # Group by category
+        by_kat = {}
+        for a in APP_DATA["artikel"]:
+            k = a["kategorie"]
+            by_kat.setdefault(k, []).append(a)
+
+        for kat, artikel in by_kat.items():
+            # Category header
+            kat_icons = {"Molkereiprodukte":"🥛","Getränke":"🍹","Obst & Gemüse":"🥦",
+                         "Tiefkühlprodukte":"❄","Backwaren":"🍞"}
+            kat_icon = kat_icons.get(kat, "📦")
+            cat_header = QHBoxLayout()
+            cat_header.addWidget(label(f"{kat_icon} {kat}", 15, bold=True))
+            cnt_badge = badge(f"{len(artikel)} Artikel", "#e8f0ff", "#1a5dcf")
+            cat_header.addWidget(cnt_badge)
+            cat_header.addStretch()
+            root.addLayout(cat_header)
+
+            # Table for this category
+            c = card()
+            cl = QVBoxLayout(c)
+            cl.setContentsMargins(20, 12, 20, 12)
+
+            t = QTableWidget(len(artikel), 7)
+            t.setHorizontalHeaderLabels(["ID", "Name", "Bestand", "Mindest", "Preis", "Lieferant", "MHD"])
+            t.setEditTriggers(QTableWidget.NoEditTriggers)
+            t.setSelectionBehavior(QTableWidget.SelectRows)
+            t.verticalHeader().setVisible(False)
+            t.setShowGrid(False)
+            t.setAlternatingRowColors(True)
+            t.setStyleSheet("""
+                QTableWidget { background: transparent; border: none; }
+                QHeaderView::section { background:transparent; color:#7b8ea9; font-weight:bold; border:none; padding:4px 8px; border-bottom:1px solid #d8e3f0; }
+                QTableWidget::item { padding:7px; border-bottom:1px solid #f0f4f8; color:#1a2a4a; }
+                QTableWidget::item:selected { background:#e8f0ff; }
+                QTableWidget::item:alternate { background:#f8fafd; }
+            """)
+            t.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+            for r, art in enumerate(artikel):
+                t.setRowHeight(r, 40)
+                t.setItem(r, 0, QTableWidgetItem(art["id"]))
+                name_item = QTableWidgetItem(art["name"])
+                name_item.setFont(QFont("Segoe UI", 12, QFont.Bold))
+                t.setItem(r, 1, name_item)
+                bestand_item = QTableWidgetItem(str(art["bestand"]))
+                if art["bestand"] < art["min_bestand"]:
+                    bestand_item.setForeground(QColor(C_RED))
+                    bestand_item.setFont(QFont("Segoe UI", 12, QFont.Bold))
+                else:
+                    bestand_item.setForeground(QColor(C_GREEN))
+                t.setItem(r, 2, bestand_item)
+                t.setItem(r, 3, QTableWidgetItem(str(art["min_bestand"])))
+                t.setItem(r, 4, QTableWidgetItem(f"€ {art['preis']:.2f}"))
+                t.setItem(r, 5, QTableWidgetItem(art["lieferant"]))
+                t.setItem(r, 6, QTableWidgetItem(art["mhd"]))
+
+            total_h = sum(t.rowHeight(r) for r in range(len(artikel)))
+            t.setFixedHeight(total_h + t.horizontalHeader().height() + 8)
+            t.doubleClicked.connect(lambda idx, art_list=artikel: ArtikelDetailDialog(art_list[idx.row()], self).exec_())
+
+            cl.addWidget(t)
+            root.addWidget(c)
+
+        root.addStretch()
+        scroll.setWidget(inner)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0,0,0,0)
+        lay.addWidget(scroll)
+
+
+# ──────────────────────────────────────────────
+# LIEFERANTEN PAGE
+# ──────────────────────────────────────────────
+class LieferantenPage(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"background: {C_PAGE};")
+        self._build()
+
+    def _build(self):
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        inner = QWidget()
+        inner.setStyleSheet(f"background: {C_PAGE};")
+        root = QVBoxLayout(inner)
+        root.setContentsMargins(28, 24, 28, 28)
+        root.setSpacing(20)
+
+        hdr = QHBoxLayout()
+        hdr.addWidget(label("🏭 Lieferanten", 22, bold=True))
+        hdr.addStretch()
+        b_new = btn("+ Neuer Lieferant", bg=C_GREEN)
+        b_new.clicked.connect(self._neuer_lieferant)
+        b_csv = btn("📊 CSV Export", bg=C_MUTED)
+        b_csv.clicked.connect(lambda: export_csv(APP_DATA["lieferanten"],
+            ["name","kontakt","telefon","lieferungen"], "Lieferanten", self))
+        hdr.addWidget(b_new)
+        hdr.addWidget(b_csv)
+        root.addLayout(hdr)
+
+        # Stats
+        stat_row = QHBoxLayout()
+        total_lief = len(APP_DATA["lieferanten"])
+        total_del = sum(l.get("lieferungen",0) for l in APP_DATA["lieferanten"])
+        for st_val, st_name, st_col in [
+            (str(total_lief), "Lieferanten", C_BLUE),
+            (str(total_del), "Lieferungen gesamt", C_GREEN),
+        ]:
+            sc = card()
+            scl = QVBoxLayout(sc)
+            scl.setContentsMargins(20,14,20,14)
+            scl.addWidget(label(st_val, 28, bold=True, color=st_col))
+            scl.addWidget(label(st_name, 11, color=C_MUTED))
+            stat_row.addWidget(sc)
+        stat_row.addStretch()
+        root.addLayout(stat_row)
+
+        # Lieferant cards
+        self.cards_area = QVBoxLayout()
+        self.cards_area.setSpacing(14)
+        self._render_cards()
+        root.addLayout(self.cards_area)
+        root.addStretch()
+
+        scroll.setWidget(inner)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0,0,0,0)
+        lay.addWidget(scroll)
+
+    def _render_cards(self):
+        while self.cards_area.count():
+            item = self.cards_area.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for lief in APP_DATA["lieferanten"]:
+            c = card()
+            shadow(c, blur=10)
+            cl = QHBoxLayout(c)
+            cl.setContentsMargins(20, 16, 20, 16)
+            cl.setSpacing(16)
+
+            # Icon
+            ico = QLabel("🏭")
+            ico.setFont(QFont("Segoe UI", 28))
+            ico.setFixedSize(56, 56)
+            ico.setAlignment(Qt.AlignCenter)
+            ico.setStyleSheet("background: #f0f4ff; border-radius: 12px;")
+
+            # Info
+            info = QVBoxLayout()
+            info.setSpacing(4)
+            info.addWidget(label(lief["name"], 15, bold=True))
+            info.addWidget(label(f"✉ {lief['kontakt']}", 11, color=C_MUTED))
+            info.addWidget(label(f"📞 {lief['telefon']}", 11, color=C_MUTED))
+
+            # Stats
+            stat_col = QVBoxLayout()
+            stat_col.setAlignment(Qt.AlignCenter)
+            stat_col.addWidget(label(str(lief.get("lieferungen",0)), 24, bold=True, color=C_BLUE))
+            stat_col.addWidget(label("Lieferungen", 10, color=C_MUTED))
+
+            # Actions
+            action_col = QVBoxLayout()
+            action_col.setSpacing(6)
+            b_best = btn("📦 Bestellen", bg=C_GREEN, size=11)
+            b_best.setFixedWidth(130)
+            b_best.clicked.connect(lambda _, l=lief: NeueBestellungDialog(parent=self).exec_())
+            b_edit = btn("✏ Bearbeiten", bg=C_BLUE, size=11)
+            b_edit.setFixedWidth(130)
+            b_edit.clicked.connect(lambda _, l=lief: self._edit_lieferant(l))
+            action_col.addWidget(b_best)
+            action_col.addWidget(b_edit)
+
+            cl.addWidget(ico)
+            cl.addLayout(info)
+            cl.addStretch()
+            cl.addLayout(stat_col)
+            cl.addSpacing(20)
+            cl.addLayout(action_col)
+            self.cards_area.addWidget(c)
+
+    def _neuer_lieferant(self):
+        dlg = LieferantDialog(parent=self)
+        if dlg.exec_():
+            self._render_cards()
+
+    def _edit_lieferant(self, lief):
+        dlg = LieferantDialog(lief=lief, parent=self)
+        if dlg.exec_():
+            self._render_cards()
+
+
+class LieferantDialog(QDialog):
+    def __init__(self, lief=None, parent=None):
+        super().__init__(parent)
+        self.lief = lief
+        self.lief_index = None
+        if lief:
+            self.lief_index = next((i for i, l in enumerate(APP_DATA["lieferanten"]) if l["name"] == lief["name"]), None)
+        self.setWindowTitle("Lieferant bearbeiten" if lief else "Neuer Lieferant")
+        self.setMinimumWidth(420)
+        self.setStyleSheet(f"background: {C_PAGE};")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24,24,24,24)
+        lay.setSpacing(16)
+        lay.addWidget(label("🏭 " + ("Lieferant bearbeiten" if lief else "Neuer Lieferant"), 17, bold=True))
+
+        c = card()
+        fl = QFormLayout(c)
+        fl.setContentsMargins(20,16,20,16)
+        fl.setSpacing(12)
+
+        self.f_name = styled_input("Firmenname")
+        self.f_kontakt = styled_input("E-Mail Adresse")
+        self.f_tel = styled_input("Telefonnummer")
+        self.f_lief = QSpinBox(); self.f_lief.setRange(0,9999); self.f_lief.setFont(QFont("Segoe UI",12)); self.f_lief.setFixedHeight(38)
+        self.f_lief.setStyleSheet("QSpinBox{background:#f4f7fb;border:1.5px solid #d8e3f0;border-radius:8px;padding:0 10px;}")
+
+        if lief:
+            self.f_name.setText(lief.get("name",""))
+            self.f_kontakt.setText(lief.get("kontakt",""))
+            self.f_tel.setText(lief.get("telefon",""))
+            self.f_lief.setValue(lief.get("lieferungen",0))
+
+        fl.addRow(label("Firma:",12,bold=True,color=C_MUTED), self.f_name)
+        fl.addRow(label("E-Mail:",12,bold=True,color=C_MUTED), self.f_kontakt)
+        fl.addRow(label("Telefon:",12,bold=True,color=C_MUTED), self.f_tel)
+        fl.addRow(label("Lieferungen:",12,bold=True,color=C_MUTED), self.f_lief)
+        lay.addWidget(c)
+
+        btn_row = QHBoxLayout()
+        b_save = btn("💾 Speichern", C_GREEN)
+        b_save.clicked.connect(self._save)
+        if lief:
+            b_del = btn("🗑 Löschen", C_RED)
+            b_del.clicked.connect(self._delete)
+            btn_row.addWidget(b_del)
+        b_cancel = btn("Abbrechen", bg="#e0e7f0", fg=C_TEXT)
+        b_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(b_save)
+        btn_row.addStretch()
+        btn_row.addWidget(b_cancel)
+        lay.addLayout(btn_row)
+
+    def _save(self):
+        if not self.f_name.text().strip():
+            QMessageBox.warning(self, "Fehler", "Bitte Firmenname eingeben!")
+            return
+        data = {"name": self.f_name.text().strip(), "kontakt": self.f_kontakt.text().strip(),
+                "telefon": self.f_tel.text().strip(), "lieferungen": self.f_lief.value()}
+        if self.lief_index is not None:
+            APP_DATA["lieferanten"][self.lief_index] = data
+        else:
+            APP_DATA["lieferanten"].append(data)
+        save_data(APP_DATA)
+        self.accept()
+
+    def _delete(self):
+        reply = QMessageBox.question(self, "Löschen", f"Lieferant '{self.lief['name']}' löschen?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes and self.lief_index is not None:
+            APP_DATA["lieferanten"].pop(self.lief_index)
+            save_data(APP_DATA)
+            self.accept()
+
+
+# ──────────────────────────────────────────────
+# EINSTELLUNGEN PAGE
+# ──────────────────────────────────────────────
+class EinstellungenPage(QWidget):
+    def __init__(self, music_player_ref=None, parent=None):
+        super().__init__(parent)
+        self.music_ref = music_player_ref
+        self.setStyleSheet(f"background: {C_PAGE};")
+        self._build()
+
+    def _build(self):
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        inner = QWidget()
+        inner.setStyleSheet(f"background: {C_PAGE};")
+        root = QVBoxLayout(inner)
+        root.setContentsMargins(28, 24, 28, 28)
+        root.setSpacing(20)
+
+        root.addWidget(label("⚙ Einstellungen", 22, bold=True))
+
+        # Musik Einstellungen
+        mc = card()
+        ml = QVBoxLayout(mc)
+        ml.setContentsMargins(24, 20, 24, 20)
+        ml.setSpacing(12)
+        ml.addWidget(label("🎵 Hintergrundmusik", 15, bold=True))
+        ml.addWidget(label("Lo-Fi Ambient Musik – wird automatisch generiert und loopend abgespielt.", 12, color=C_MUTED))
+
+        music_ctrl = QHBoxLayout()
+        b_play = btn("▶ Musik starten", bg=C_BLUE)
+        b_play.clicked.connect(lambda: self.music_ref._play() if self.music_ref else None)
+        b_stop = btn("⏹ Stoppen", bg=C_RED)
+        b_stop.clicked.connect(lambda: self.music_ref._stop() if self.music_ref else None)
+        music_ctrl.addWidget(b_play)
+        music_ctrl.addWidget(b_stop)
+        music_ctrl.addStretch()
+
+        vol_row = QHBoxLayout()
+        vol_row.addWidget(label("Lautstärke:", 12, bold=True, color=C_MUTED))
+        for pct in [25, 50, 75, 100]:
+            bv = btn(f"{pct}%", bg="#e0e7f0", fg=C_TEXT, size=11)
+            bv.setFixedWidth(60)
+            bv.clicked.connect(lambda _, p=pct: self.music_ref._set_volume(p/100) if self.music_ref else None)
+            vol_row.addWidget(bv)
+        vol_row.addStretch()
+
+        ml.addLayout(music_ctrl)
+        ml.addLayout(vol_row)
+        if not MUSIC_AVAILABLE:
+            ml.addWidget(label("⚠ pygame nicht installiert. Bitte: pip install pygame", 11, color=C_RED))
+        root.addWidget(mc)
+
+        # Daten Einstellungen
+        dc = card()
+        dl = QVBoxLayout(dc)
+        dl.setContentsMargins(24, 20, 24, 20)
+        dl.setSpacing(12)
+        dl.addWidget(label("💾 Datenverwaltung", 15, bold=True))
+        dl.addWidget(label(f"Datendatei: {DATA_FILE}", 11, color=C_MUTED))
+
+        dat_row = QHBoxLayout()
+        b_backup = btn("📦 Backup erstellen", bg=C_GREEN)
+        b_backup.clicked.connect(self._backup)
+        b_reset = btn("🔄 Daten zurücksetzen", bg=C_RED)
+        b_reset.clicked.connect(self._reset)
+        dat_row.addWidget(b_backup)
+        dat_row.addWidget(b_reset)
+        dat_row.addStretch()
+        dl.addLayout(dat_row)
+        root.addWidget(dc)
+
+        # Info
+        ic = card()
+        il = QVBoxLayout(ic)
+        il.setContentsMargins(24, 20, 24, 20)
+        il.setSpacing(8)
+        il.addWidget(label("ℹ LagerPro Software", 15, bold=True))
+        for line in [
+            "Version: 2.0 – Vollausbau",
+            "Framework: PyQt5",
+            "PDF-Export: reportlab",
+            "Musik: pygame + generiertes Lo-Fi WAV",
+            "Daten: lokal als JSON gespeichert",
+        ]:
+            il.addWidget(label(f"· {line}", 12, color=C_MUTED))
+        root.addWidget(ic)
+
+        root.addStretch()
+        scroll.setWidget(inner)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0,0,0,0)
+        lay.addWidget(scroll)
+
+    def _backup(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Backup speichern", "lagerpro_backup.json", "JSON (*.json)")
+        if path:
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(APP_DATA, f, ensure_ascii=False, indent=2)
+                QMessageBox.information(self, "Backup", f"Backup gespeichert:\n{path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Fehler", str(e))
+
+    def _reset(self):
+        reply = QMessageBox.question(self, "Zurücksetzen",
+            "Wirklich alle Daten auf Standard zurücksetzen?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            if os.path.exists(DATA_FILE):
+                os.remove(DATA_FILE)
+            QMessageBox.information(self, "Zurückgesetzt", "Daten wurden zurückgesetzt. Bitte App neu starten.")
 
 
 # ──────────────────────────────────────────────
@@ -1743,31 +2758,38 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
 
-        # Create real pages for main sections
-        self.dashboard_page = DashboardPage()
-        self.lager_page = LagerbestandPage()
-        self.bestellungen_page = BestellungenPage()
-        self.berichte_page = BerichtePage()
+        # Create all pages
+        self.dashboard_page        = DashboardPage()
+        self.lager_page            = LagerbestandPage()
+        self.bestellungen_page     = BestellungenPage()
+        self.artikelverw_page      = ArtikelverwaltungPage()
+        self.bestaetigung_page     = BestaetigungPage()
+        self.artikelliste_page     = ArtikellistePage()
+        self.lieferanten_page      = LieferantenPage()
+        self.berichte_page         = BerichtePage()
+        self.einstellungen_page    = None  # created after music player
 
-        page_configs = [
-            ("Dashboard",        "🏠", self.dashboard_page),
-            ("Lagerbestand",     "📦", self.lager_page),
-            ("Bestellungen",     "🛒", self.bestellungen_page),
-            ("Artikelverwaltung","🏷", None),
-            ("Bestätigung",       "✅", None),
-            ("Artikelliste",      "📋", None),
-            ("Lieferanten",      "🏭", None),
-            ("Berichte",          "📊", self.berichte_page),
-            ("Einstellungen",    "⚙", None),
+        # Sidebar (needs music player first)
+        self.music_player = MusicPlayer()
+        self.sidebar = Sidebar(self._navigate, music_player=self.music_player)
+
+        # Now create Einstellungen with music ref
+        self.einstellungen_page = EinstellungenPage(music_player_ref=self.music_player)
+
+        pages = [
+            self.dashboard_page,
+            self.lager_page,
+            self.bestellungen_page,
+            self.artikelverw_page,
+            self.bestaetigung_page,
+            self.artikelliste_page,
+            self.lieferanten_page,
+            self.berichte_page,
+            self.einstellungen_page,
         ]
+        for p in pages:
+            self.stack.addWidget(p)
 
-        for title, icon, page in page_configs:
-            if page is not None:
-                self.stack.addWidget(page)
-            else:
-                self.stack.addWidget(PlaceholderPage(title, icon))
-
-        sidebar = Sidebar(self._navigate)
         right = QWidget()
         right_lay = QVBoxLayout(right)
         right_lay.setContentsMargins(0, 0, 0, 0)
@@ -1775,11 +2797,19 @@ class MainWindow(QMainWindow):
         right_lay.addWidget(Topbar())
         right_lay.addWidget(self.stack)
 
-        main_lay.addWidget(sidebar)
+        main_lay.addWidget(self.sidebar)
         main_lay.addWidget(right)
 
     def _navigate(self, idx, name):
         self.stack.setCurrentIndex(idx)
+
+    def closeEvent(self, event):
+        if MUSIC_AVAILABLE:
+            try:
+                self.music_player._stop()
+            except:
+                pass
+        super().closeEvent(event)
 
 
 # ──────────────────────────────────────────────
