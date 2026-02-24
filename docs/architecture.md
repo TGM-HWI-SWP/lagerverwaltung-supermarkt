@@ -156,6 +156,8 @@ class ReportPort(ABC):
 Die GUI darf ausschließlich die berechneten Daten anzeigen,
 führt aber keine eigene Berechnung durch.
 
+Wenn Rolle 4 später Mindestbestand in der GUI editieren soll, kann man unter ProductDialogWindow bei den Feldern optional Mindestbestand (min_quantity)
+
 ### 6. UI Layer (`src/ui/`)
 
 **Verantwortung:** Benutzeroberfläche (PyQt6)
