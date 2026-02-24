@@ -3,5 +3,5 @@
 import sys
 from pathlib import Path
 
-# Pfad zur src-Verzeichnis hinzufügen
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# Pfad zur Projektwurzel hinzufügen, damit `import src...` funktioniert
+sys.path.insert(0, str(Path(__file__).parent.parent))
