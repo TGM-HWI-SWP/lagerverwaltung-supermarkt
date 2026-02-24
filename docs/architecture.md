@@ -170,6 +170,11 @@ test_domain.py
     - test_get_total_inventory_value
     - test_get_movements
 ```
+#### TestInventoryReport (Report A)
+Testet den deterministischen Lagerstandsreport (Rolle 2):
+
+- `test_report_a_empty_repo()` - Leeres Repository liefert 0-Werte und leere Liste
+- `test_report_a_totals_and_status_counts()` - Summen (Warenwert) und Status-Zählungen (OK/LOW/OUT)
 
 #### Integration Tests (`tests/integration/`)
 ```
