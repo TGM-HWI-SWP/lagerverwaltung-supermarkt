@@ -23,6 +23,7 @@ class WarehouseService:
         price: float,
         category: str = "",
         initial_quantity: int = 0,
+        min_quantity: int = 0,
     ) -> Product:
         """Neues Produkt erstellen und speichern"""
         product = Product(
@@ -31,6 +32,7 @@ class WarehouseService:
             description=description,
             price=price,
             quantity=initial_quantity,
+            min_quantity=min_quantity,
             category=category,
         )
         self.repository.save_product(product)
@@ -41,6 +43,9 @@ class WarehouseService:
         self, product_id: str, quantity: int, reason: str = "", user: str = "system"
     ) -> None:
         """Bestand erhöhen"""
+        if quantity <= 0:
+            raise ValueError("Menge muss größer 0 sein")
+
         product = self.repository.load_product(product_id)
         if not product:
             raise ValueError(f"Produkt {product_id} nicht gefunden")
@@ -63,6 +68,9 @@ class WarehouseService:
         self, product_id: str, quantity: int, reason: str = "", user: str = "system"
     ) -> None:
         """Bestand verringern"""
+        if quantity <= 0:
+            raise ValueError("Menge muss größer 0 sein")
+
         product = self.repository.load_product(product_id)
         if not product:
             raise ValueError(f"Produkt {product_id} nicht gefunden")
