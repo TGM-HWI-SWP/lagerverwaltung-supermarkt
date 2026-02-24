@@ -17,6 +17,7 @@ class Product:
     description: str
     price: float
     quantity: int = 0
+    min_quantity: int = 0  # Mindestbestand / Nachbestellgrenze
     sku: str = ""
     category: str = ""
     created_at: datetime = field(default_factory=datetime.now)
@@ -31,6 +32,8 @@ class Product:
             raise ValueError("Preis kann nicht negativ sein")
         if self.quantity < 0:
             raise ValueError("Bestand kann nicht negativ sein")
+        if self.min_quantity < 0:
+            raise ValueError("Mindestbestand kann nicht negativ sein")
 
     def update_quantity(self, amount: int) -> None:
         """
