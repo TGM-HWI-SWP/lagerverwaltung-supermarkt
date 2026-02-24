@@ -40,6 +40,7 @@ def test_best_selling_product():
     movements = [
         {"product": "Milch", "quantity": 2, "type": "sale"},
         {"product": "Brot", "quantity": 5, "type": "sale"},
+        {"product": "Banane", "quantity": 7, "type": "sale"},
     ]
 
     repo = DummyRepository(movements)
