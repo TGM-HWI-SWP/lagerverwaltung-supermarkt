@@ -12,6 +12,7 @@ Dieses Changelog dokumentiert meine Beiträge pro Version (inkl. relevanter Comm
 - Updated `docs/tests.md` und `docs/architecture.md`
 
 Commits:
+- bb6aef2 changelog geupdated
 - 7647711 Rolle 4, ProductDialogWindow für später erwähnt
 - 6ac5632 changelog dateiname geändert auf github namen
 - c8d24bb product.py min_quantity update
