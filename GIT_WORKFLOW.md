@@ -83,12 +83,6 @@ git status
 ### Auflösen
 ```bash
 # 1. Konflikt-Marker anschauen
-<<<<<<< HEAD
-    # Deine Version
-=======
-    # Ihre Version
->>>>>>> feature/...
-
 # 2. Korrekt zusammenführen
 # 3. Tests ausführen
 pytest

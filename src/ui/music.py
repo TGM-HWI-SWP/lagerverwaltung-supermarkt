@@ -24,49 +24,6 @@ try:
 except Exception:
     pass
 
-
-class MusicGenerator:
-    """Generiert einen Lo-Fi Ambient WAV-Track vollständig im Speicher."""
-
-    CHORDS = [
-        [261.63, 329.63, 392.00, 493.88],  # Cmaj7
-        [220.00, 261.63, 329.63, 415.30],  # Am7
-        [174.61, 220.00, 261.63, 349.23],  # Fmaj7
-        [196.00, 246.94, 293.66, 392.00],  # G7
-    ]
-
-    @classmethod
-    def generate(cls, path: str, duration: int = 30, sample_rate: int = 44100):
-        import random
-        random.seed(42)
-        n = sample_rate * duration
-        chord_len = sample_rate * (duration // len(cls.CHORDS))
-        samples = []
-
-        for i in range(n):
-            t = i / sample_rate
-            chord_idx = min(i // chord_len, len(cls.CHORDS) - 1)
-            freqs = cls.CHORDS[chord_idx]
-
-            val = sum(
-                math.sin(2 * math.pi * f * (1.0 + random.uniform(-0.002, 0.002)) * t) * 0.12
-                for f in freqs
-            )
-            val += math.sin(2 * math.pi * (freqs[0] / 2) * t) * 0.10
-            val += random.uniform(-0.015, 0.015)
-
-            pos_in_chord = (i % chord_len) / chord_len
-            val *= math.sin(math.pi * pos_in_chord) ** 0.5 * 0.6
-            val = max(-1.0, min(1.0, val))
-            samples.append(int(val * 32767))
-
-        with wave.open(path, "w") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            wf.writeframes(struct.pack(f"<{len(samples)}h", *samples))
-
-
 class MusicPlayer(QWidget):
     """Kompakter Musik-Player-Widget am unteren Ende der Sidebar."""
 
@@ -76,10 +33,8 @@ class MusicPlayer(QWidget):
         self.setStyleSheet("background: transparent;")
         self._playing = False
         self._volume = 0.5
-        self._music_path = None
+        self._music_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lofi.mp3")
         self._build_ui()
-        if MUSIC_AVAILABLE:
-            self._prepare_music()
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
@@ -138,15 +93,6 @@ class MusicPlayer(QWidget):
         ctrl_row.addStretch()
         ctrl_row.addWidget(self._status_dot)
         lay.addLayout(ctrl_row)
-
-    def _prepare_music(self):
-        try:
-            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-            tmp.close()
-            self._music_path = tmp.name
-            MusicGenerator.generate(self._music_path, duration=30)
-        except Exception as e:
-            print(f"Music gen error: {e}")
 
     def _toggle_play(self):
         if not MUSIC_AVAILABLE:

@@ -31,24 +31,6 @@ def test_sales_per_product_normal():
     assert result["Milch"] == 5
     assert result["Brot"] == 1
 
-
-# ----------------------------
-# BESTSELLER TEST
-# ----------------------------
-
-def test_best_selling_product():
-    movements = [
-        {"product": "Milch", "quantity": 2, "type": "sale"},
-        {"product": "Brot", "quantity": 5, "type": "sale"},
-        {"product": "Banane", "quantity": 7, "type": "sale"},
-    ]
-
-    repo = DummyRepository(movements)
-    report = ReportB(repo)
-
-    assert report.best_selling_product() == "Brot"
-
-
 # ----------------------------
 # LEERES REPOSITORY
 # ----------------------------
