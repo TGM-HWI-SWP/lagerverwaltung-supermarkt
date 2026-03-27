@@ -38,6 +38,9 @@ class InMemoryRepository(RepositoryPort):
     def load_movements(self) -> List[Movement]:
         """Alle Bewegungen aus Memory laden"""
         return self.movements.copy()
+    
+    def get_all_movements(self):
+        return self.movements
 
 
 class RepositoryFactory:
@@ -58,3 +61,5 @@ class RepositoryFactory:
             return InMemoryRepository()
         else:
             raise ValueError(f"Unbekannter Repository-Typ: {repository_type}")
+
+
