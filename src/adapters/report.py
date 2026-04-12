@@ -1,73 +1,52 @@
-"""Report Adapter - Report-Generierung"""
+"""Report Adapter – Konsolenausgabe über InventoryReport.
 
-from typing import Dict
+ConsoleReportAdapter implementiert ReportPort und delegiert intern
+an InventoryReport (Report A). So ist die Logik nur einmal geschrieben.
+"""
 
-from ..ports import ReportPort
+from ..ports import ReportPort, RepositoryPort
+from ..reports.report_a import InventoryReport
 
 
 class ConsoleReportAdapter(ReportPort):
-    """Report-Adapter für Konsolenausgabe"""
+    """Report-Adapter für Konsolenausgabe.
 
-    def __init__(self, products: Dict = None, movements: list = None):
-        self.products = products or {}
-        self.movements = movements or []
+    Implementiert ReportPort und nutzt intern InventoryReport,
+    sodass die Berechnungslogik nicht dupliziert wird.
+    """
+
+    def __init__(self, repository: RepositoryPort):
+        self._repository = repository
+        self._inventory_report = InventoryReport(repository)
 
     def generate_inventory_report(self) -> str:
-        """
-        Lagerbestandsbericht als Text generieren
-
-        Returns:
-            Formatierter Bericht
-        """
-        if not self.products:
-            return "Lager ist leer.\n"
-
-        report = "=" * 60 + "\n"
-        report += "LAGERBESTANDSBERICHT\n"
-        report += "=" * 60 + "\n\n"
-
-        total_value = 0
-        for product_id, product in self.products.items():
-            value = product.get_total_value()
-            total_value += value
-            report += f"ID: {product_id}\n"
-            report += f"  Name: {product.name}\n"
-            report += f"  Kategorie: {product.category}\n"
-            report += f"  Bestand: {product.quantity}\n"
-            report += f"  Preis: {product.price:.2f} €\n"
-            report += f"  Gesamtwert: {value:.2f} €\n\n"
-
-        report += "-" * 60 + "\n"
-        report += f"Gesamtwert Lager: {total_value:.2f} €\n"
-        report += "=" * 60 + "\n"
-
-        return report
+        """Lagerbestandsbericht via InventoryReport erzeugen."""
+        result = self._inventory_report.generate()
+        return self._inventory_report.render(result)
 
     def generate_movement_report(self) -> str:
-        """
-        Bewegungsprotokoll als Text generieren
+        """Bewegungsprotokoll als Text erzeugen."""
+        movements = self._repository.load_movements()
 
-        Returns:
-            Formatierter Bericht
-        """
-        if not self.movements:
+        if not movements:
             return "Keine Lagerbewegungen vorhanden.\n"
 
-        report = "=" * 80 + "\n"
-        report += "BEWEGUNGSPROTOKOLL\n"
-        report += "=" * 80 + "\n\n"
+        sep = "=" * 70
+        thin = "-" * 70
+        lines = [sep, "  BEWEGUNGSPROTOKOLL", sep, ""]
 
-        for movement in sorted(self.movements, key=lambda m: m.timestamp):
-            report += f"[{movement.timestamp.strftime('%Y-%m-%d %H:%M:%S')}]\n"
-            report += f"  Produkt: {movement.product_name} (ID: {movement.product_id})\n"
-            report += f"  Typ: {movement.movement_type}\n"
-            report += f"  Menge: {movement.quantity_change:+d}\n"
-            if movement.reason:
-                report += f"  Grund: {movement.reason}\n"
-            report += f"  Durchgeführt von: {movement.performed_by}\n\n"
+        for m in sorted(movements, key=lambda x: x.timestamp):
+            sign = "+" if m.quantity_change > 0 else ""
+            lines.append(
+                f"  [{m.timestamp.strftime('%Y-%m-%d %H:%M:%S')}]  "
+                f"{m.movement_type}"
+            )
+            lines.append(f"  Produkt:  {m.product_name} (ID: {m.product_id})")
+            lines.append(f"  Menge:    {sign}{m.quantity_change}")
+            if m.reason:
+                lines.append(f"  Grund:    {m.reason}")
+            lines.append(f"  Von:      {m.performed_by}")
+            lines.append("")
 
-        report += "=" * 80 + "\n"
-        report += f"Gesamtbewegungen: {len(self.movements)}\n"
-        report += "=" * 80 + "\n"
-
-        return report
+        lines += [thin, f"  Bewegungen gesamt: {len(movements)}", sep]
+        return "\n".join(lines)
