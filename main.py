@@ -14,4 +14,10 @@ service.create_product("EIER-01", "Eier", "10er", 3.00,
 
 report = InventoryReport(repo)
 result = report.generate()
-print(report.render(result))
+
+# Text ausgeben (Konsole)
+print(report.render_text(result))
+
+# HTML speichern (Browser / PDF)
+report.save_html(result, "report.html")
+# → report.html öffnen → Drucken → Als PDF speichern
