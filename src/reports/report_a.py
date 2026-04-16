@@ -295,3 +295,7 @@ class InventoryReport:
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(html_content)
         print(f"HTML-Report gespeichert: {filepath}")
+
+    def render(self, result: InventoryReportResult) -> str:
+        """Alias für render_text() – für Kompatibilität mit Tests und ConsoleReportAdapter."""
+        return self.render_text(result)
